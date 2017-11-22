@@ -4,7 +4,6 @@ import rospy
 
 class YawController(object):
     def __init__(self, wheel_base, steer_ratio, min_speed, max_lat_accel, max_steer_angle):
-        self.ang_pid     = PID(0.2,0.01,0) #PID(24.5,10.6,0)
         self.wheel_base  = wheel_base
         self.steer_ratio = steer_ratio
         self.min_speed   = min_speed          # minimum speed to which saturate the steering angle of speed lower than it, used to avoid singularity that will lead to maximum steering angle when the car is slow
@@ -21,7 +20,7 @@ class YawController(object):
         # multiply for the steer_ratio convert the angle of
         # the wheels in the steering angle 
         angle = atan(self.wheel_base / radius) * self.steer_ratio
-        return max(self.min_angle, min(self.max_angle, angle))
+        return angle #max(self.min_angle, min(self.max_angle, angle))
 
     # This method 	
     def get_steering(self, linear_velocity, angular_velocity, current_velocity):
@@ -53,15 +52,9 @@ class YawController(object):
     def step(self, linear_velocity, angular_velocity, current_velocity, current_angular_velocity,delta_t):
         # Evaluate the set point of the steering angle
         desidered_steer_angle = self.get_steering(linear_velocity, angular_velocity, current_velocity)
-        measured_steer_angle  = self.get_steering(current_velocity, current_angular_velocity, current_velocity) #self.get_angle_from_speed(current_velocity,current_angular_velocity)
+        measured_steer_angle  = self.get_steering(current_velocity, current_angular_velocity, current_velocity) 
 
         # Compute the traking error
-        error = desidered_steer_angle - measured_steer_angle
-        rospy.loginfo('steer_angle_c {0}'.format(error))
-        requested_steer_angle =  desidered_steer_angle + 0*self.ang_pid.step(error, delta_t)
+        requested_steer_angle =  desidered_steer_angle
 
 	return requested_steer_angle
-
-  
-    def reset(self):  
-        self.ang_pid.reset()
