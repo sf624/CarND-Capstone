@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-
+import sys
 import rospy
 from geometry_msgs.msg import PoseStamped
 from styx_msgs.msg import Lane, Waypoint
@@ -50,55 +50,44 @@ class WaypointUpdater(object):
         self.loop()
 
     def loop(self):
-        rate = rospy.Rate(5) # 5Hz
+        rate = rospy.Rate(25) # 25 Hz is half of the twist controller
+        is_lost = True
         while not rospy.is_shutdown():
-            if self.pose is not None and self.waypoints is not None and self.traffic is not None and self.current_velocity is not None:
-                ego_theta = 2.*math.acos(self.pose.orientation.w)
-                ego_vx = np.dot(np.array([[math.cos(ego_theta),-math.sin(ego_theta)],
-                                          [math.sin(ego_theta), math.cos(ego_theta)]]), np.array([1,0]))
-                ego_vy = np.dot(np.array([[0,-1],[1,0]]), ego_vx)
-                #rospy.logerr(ego_theta)
-
-                # publish final_waypoints
-                min_distance = 1e9
-                initial_wp_index = 0
-                for k in xrange(len(self.waypoints)):
-                    i = k
-                    if self.previous_initial_wp_index is not None:
-                        i = (i + self.previous_initial_wp_index) % len(self.waypoints)
-
-                    waypoint = self.waypoints[i].pose.pose.position
-                    np_waypoint = np.array([waypoint.x,waypoint.y])
-                    np_ego_pose = np.array([self.pose.position.x,self.pose.position.y])
-                    np_diff = np_waypoint - np_ego_pose
-                    distance = np.linalg.norm(np_diff)
-                    param = np.dot(np.linalg.inv(np.vstack((ego_vx,ego_vy)).transpose()), np_diff)
-                    # If the waypoint is in front of vehicle and also the closest one,
-                    # update the index.
-                    if(param[0] > 0 and distance < min_distance):
-                        min_distance = distance
-                        initial_wp_index = i % len(self.waypoints)
-                        if self.previous_initial_wp_index is not None:
-                            break
-
-                # publish
-                final_waypoints = Lane()
-                final_waypoints.header = std_msgs.msg.Header()
-                final_waypoints.header.stamp = rospy.Time.now()
-                for i in xrange(LOOKAHEAD_WPS):
-                    index = (initial_wp_index + i) % len(self.waypoints)
-                    final_waypoints.waypoints.append(self.waypoints[index])
-
-                self.previous_initial_wp_index = initial_wp_index
-
-                v_limit = rospy.get_param('/waypoint_loader/velocity') / 3.6  # Speed limit given by ROS parameter
-                v_limit *= 0.9           # Set margin to not exceed speed limit.
-                v0 = min(25.0, v_limit)  # This program allows maximum spped of 25m/s.
-
-                if self.traffic == -1:
-                    for i in xrange(LOOKAHEAD_WPS):
-                        self.set_waypoint_velocity(final_waypoints.waypoints, i, v0)
+            rate.sleep()
+            if is_lost:  # check if all is initialized and localize the car 
+                if self.pose is not None and self.waypoints is not None and self.traffic is not None and self.current_velocity is not None:
+                    # Search the closer waypoint
+                    self.previous_initial_wp_index = self.global_waypoint_search()
+                    is_lost = False 
+                    continue
                 else:
+                    continue      
+            
+
+            #initial_wp_index = self.global_waypoint_search()
+            [is_ok,initial_wp_index] = self.relative_waypoint_search(self.previous_initial_wp_index, 50) #window is 100 should be enugh at 25 m/s we do 2 waypoiny per step!!!
+            if not is_ok: # we care lost compute global position
+                self.previous_initial_wp_index = self.global_waypoint_search()                
+                continue
+
+            # publish
+            final_waypoints = Lane()
+            final_waypoints.header = std_msgs.msg.Header()
+            final_waypoints.header.stamp = rospy.Time.now()
+            for i in xrange(LOOKAHEAD_WPS):
+                index = (initial_wp_index + i) % len(self.waypoints)
+                final_waypoints.waypoints.append(self.waypoints[index])
+
+            self.previous_initial_wp_index = initial_wp_index
+
+            v_limit = rospy.get_param('/waypoint_loader/velocity') / 3.6  # Speed limit given by ROS parameter
+            v_limit *= 0.9           # Set margin to not exceed speed limit.
+            v0 = v_limit; # min(25.0, v_limit)  # This program allows maximum spped of 25m/s.
+
+            if self.traffic == -1:
+                for i in xrange(LOOKAHEAD_WPS):
+                    self.set_waypoint_velocity(final_waypoints.waypoints, i, v0)
+            else:
                     #                    t0
                     #   v0 ----------------
                     #                      \
@@ -110,25 +99,103 @@ class WaypointUpdater(object):
                     #                           t1
                     #     target velocity diagram
                     #
-                    a0 = 2.5        # m/s^2  target acceleration
-                    margin = 10      # m      target margin before stop line
-                    r0 = self.distance(self.waypoints,initial_wp_index,self.traffic) - margin  # target position to stop
-                    t1 = 0.5*(2.*r0/v0 + v0/a0)
-                    t0 = 0.5*(2.*r0/v0 - v0/a0)
+                a0 = 2.5        # m/s^2  target acceleration
+                margin = 10      # m      target margin before stop line
+                r0 = self.distance(self.waypoints,initial_wp_index,self.traffic) - margin  # target position to stop
+                t1 = 0.5*(2.*r0/v0 + v0/a0)
+                t0 = 0.5*(2.*r0/v0 - v0/a0)
 
-                    for i in xrange(LOOKAHEAD_WPS):
-                        r = self.distance(self.waypoints,initial_wp_index,initial_wp_index+i)
-                        if r <= v0 * t0:
-                            v = v0
-                        elif v0*t0 < r and r < r0:
-                            v = math.sqrt(2.*a0*v0*t0 + v0*v0 - 2.*a0*r)
-                        else:
-                            v = -1
-                        self.set_waypoint_velocity(final_waypoints.waypoints, i, v)
+                for i in xrange(LOOKAHEAD_WPS):
+                    r = self.distance(self.waypoints,initial_wp_index,initial_wp_index+i)
+                    if r <= v0 * t0:
+                        v = v0
+                    elif v0*t0 < r and r < r0:
+                        v = math.sqrt(2.*a0*v0*t0 + v0*v0 - 2.*a0*r)
+                    else:
+                        v = -1
+                    self.set_waypoint_velocity(final_waypoints.waypoints, i, v)
+            self.final_waypoints_pub.publish(final_waypoints)
 
-                self.final_waypoints_pub.publish(final_waypoints)
+                
 
-            rate.sleep()
+    # relative search of the waypoint, in a window centered in center with size window_size
+    def relative_waypoint_search(self,center, window_size, distance_threshold=20):
+        min_distance = sys.float_info.max
+        ref_wp_orient = self.waypoints[center].pose.pose.orientation
+        [yaw,pich,roll] = self.quaternion_to_euler_angle(ref_wp_orient)
+        ego_position = np.array([self.pose.position.x,self.pose.position.y])
+        for rel_index in range(2*window_size):    
+            k = (rel_index - window_size + center) % len(self.waypoints)
+            wp = self.waypoints[k].pose.pose.position
+            wp_position = np.array([wp.x,wp.y])
+            # Find the vector that joing the ego positon with the position of the way point 
+            join_vect = wp_position - ego_position
+            ego_vx_versor = np.array([math.cos(roll),math.sin(roll)])
+            distance  = np.linalg.norm(join_vect)
+            param = join_vect[0]*ego_vx_versor[0] + join_vect[1]*ego_vx_versor[1]#np.dot(ego_vx_versor, join_vect)
+            # If the waypoint is in front of vehicle and also the closest one,
+            # update the index.
+            #param = 1 
+            if(param > 0 and distance < min_distance):
+                min_distance = distance
+                initial_wp_index = k
+        if min_distance>distance_threshold:
+            rospy.loginfo('WaypUPD  car is lost, waypoint distance {0} [m] '.format(min_distance))
+            return False, center
+        rospy.loginfo('WaypUPD   waypoints number {0}  relative'.format(initial_wp_index))
+        return True, initial_wp_index  
+
+    # compute out of waypoints list the closer waypoint (in front of the car) to the current pose of the robot        
+    def global_waypoint_search(self):
+        min_distance = sys.float_info.max
+        #[yaw,pich,roll] = self.quaternion_to_euler_angle(self.pose.orientation)
+        ego_position = np.array([self.pose.position.x,self.pose.position.y])
+        initial_wp_index = -1
+        for k in xrange(len(self.waypoints)):    # TODO: you can do a rough search here
+            wp = self.waypoints[k].pose.pose.position
+            wp_position = np.array([wp.x,wp.y])
+            # Find the vector that joing the ego positon with the position of the way point 
+            join_vect = wp_position - ego_position
+            #ego_vx_versor = np.array([math.cos(roll),math.sin(roll)])
+            distance  = np.linalg.norm(join_vect)
+            #param = np.dot(ego_vx_versor, join_vect)
+            # If the waypoint is in front of vehicle and also the closest one,
+            # update the index.
+            #param = 1 
+            #if(param > 0 and distance < min_distance):
+            
+            if(distance < min_distance):  # find the closest point to the vehicle
+                min_distance = distance
+                initial_wp_index = k
+                
+        rospy.loginfo('WaypUPD waypoints number {0}  global'.format(initial_wp_index))
+        return initial_wp_index
+
+
+    # Conversion quaternion to euler angle
+    @staticmethod
+    def quaternion_to_euler_angle(orientation):
+        w = orientation.w
+        x = orientation.x
+        y = orientation.y
+        z = orientation.z
+        #rospy.loginfo('WaypUPDD quaternion z {0} '.format(z))
+	ysqr = y * y
+	
+	t0 = +2.0 * (w * x + y * z)
+	t1 = +1.0 - 2.0 * (x * x + ysqr)
+	X = math.degrees(math.atan2(t0, t1))
+	
+	t2 = +2.0 * (w * y - z * x)
+	t2 = +1.0 if t2 > +1.0 else t2
+	t2 = -1.0 if t2 < -1.0 else t2
+	Y = math.degrees(math.asin(t2))
+	
+	t3 = +2.0 * (w * z + x * y)
+	t4 = +1.0 - 2.0 * (ysqr + z * z)
+	Z = math.degrees(math.atan2(t3, t4))
+	
+	return X, Y, Z
 
     def current_velocity_cb(self,msg):
         self.current_velocity = msg.twist
@@ -140,6 +207,7 @@ class WaypointUpdater(object):
 
     def waypoints_cb(self, msg):
         # TODO: Implement
+	rospy.loginfo('waypoints callback'.format())
         self.waypoints = msg.waypoints
         pass
 
