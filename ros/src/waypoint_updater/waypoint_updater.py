@@ -140,7 +140,7 @@ class WaypointUpdater(object):
                 min_distance = distance
                 initial_wp_index = k
         if min_distance>distance_threshold:
-            rospy.loginfo('WaypUPD  car is lost, waypoint distance {0} [m]'.format(min_distance))
+            rospy.loginfo('WaypUPD  car is lost, waypoint distance {0} [m] '.format(min_distance))
             return False, center
         rospy.loginfo('WaypUPD   waypoints number {0}  relative'.format(initial_wp_index))
         return True, initial_wp_index  
