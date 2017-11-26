@@ -80,11 +80,15 @@ class WaypointUpdater(object):
                         initial_wp_index = i % len(self.waypoints)
                         if self.previous_initial_wp_index is not None:
                             break
-
+                
+                
                 # publish
                 final_waypoints = Lane()
                 final_waypoints.header = std_msgs.msg.Header()
                 final_waypoints.header.stamp = rospy.Time.now()
+
+                actual_speed = self.current_velocity.linear.x
+                
                 for i in xrange(LOOKAHEAD_WPS):
                     index = (initial_wp_index + i) % len(self.waypoints)
                     final_waypoints.waypoints.append(self.waypoints[index])
@@ -92,7 +96,7 @@ class WaypointUpdater(object):
                 self.previous_initial_wp_index = initial_wp_index
 
                 v_limit = rospy.get_param('/waypoint_loader/velocity') / 3.6  # Speed limit given by ROS parameter
-                v_limit *= 0.9           # Set margin to not exceed speed limit.
+                v_limit *= 0.9               # Set margin to not exceed speed limit.
                 v0 = min(20./2.24, v_limit)  # This program allows maximum spped of 20mph.
 
                 if self.traffic == -1:
@@ -113,19 +117,29 @@ class WaypointUpdater(object):
                     a0 = 2.5        # m/s^2  target acceleration
                     margin = 10      # m      target margin before stop line
                     r0 = self.distance(self.waypoints,initial_wp_index,self.traffic) - margin  # target position to stop
-                    t1 = 0.5*(2.*r0/v0 + v0/a0)
-                    t0 = 0.5*(2.*r0/v0 - v0/a0)
-
+                    stop_space = v0*v0/(2*a0)
+                    s_start_brake = r0 - stop_space
+                    
+                    #t1 = 0.5*(2.*r0/v0 + v0/a0)
+                    #t0 = 0.5*(2.*r0/v0 - v0/a0)
+                    #rospy.loginfo("DBG STOP_S: {0}  BRAKE_S {1} TOTAL {2}".format(stop_space,s_start_brake,r0))
                     for i in xrange(LOOKAHEAD_WPS):
                         r = self.distance(self.waypoints,initial_wp_index,initial_wp_index+i)
-                        if r <= v0 * t0:
+                        if r <= s_start_brake: #v0 * t0:
                             v = v0
-                        elif v0*t0 < r and r < r0:
-                            v = math.sqrt(2.*a0*v0*t0 + v0*v0 - 2.*a0*r)
+                        elif s_start_brake < r and r < r0:
+                            ds = r-s_start_brake
+                            #rospy.loginfo("DBG DS: {0} v0 {1} ".format(ds,v0))
+                            delta = v0*v0 - 2*a0*ds
+                            t = (v0 - math.sqrt(delta))/a0
+                            v = v0 - a0*t
+                            
+                            #v = math.sqrt(2.*a0*v0*t0 + v0*v0 - 2.*a0*r)
                         else:
-                            v = -1
+                            v = 0
+                        #rospy.loginfo("SPEED: {0}".format(v))  
                         self.set_waypoint_velocity(final_waypoints.waypoints, i, v)
-
+                #rospy.loginfo("SPEED: -------------")
                 self.final_waypoints_pub.publish(final_waypoints)
 
             rate.sleep()
