@@ -3,6 +3,7 @@ from styx_msgs.msg import TrafficLight
 import tensorflow as tf
 import numpy as np
 import os
+import cv2
 
 class TLClassifier(object):
     def __init__(self, model_path):
@@ -61,6 +62,9 @@ class TLClassifier(object):
 
         """
         #TODO implement light color prediction
+        size = (600, 800)
+        image = cv2.resize(image, size, interpolation = cv2.INTER_AREA)
+
         predict = [ TrafficLight.UNKNOWN ]
         if self.predict is not None:
             predict = self.tf_session.run(self.predict, feed_dict = {

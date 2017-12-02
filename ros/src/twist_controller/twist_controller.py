@@ -32,7 +32,7 @@ class Controller(object):
         self.free_decel  = -9.81*0.02/wheel_radius
         pass
 
-    def control(self, cmd_linear, cmd_angular, cur_linear,cur_angular, dbw_enabled):
+    def control(self, cmd_linear, cmd_angular, cur_linear,cur_angular, dbw_enabled, v_limit):
 	
         # TODO: Change the arg, kwarg list to suit your needs
         # Return throttle, brake, steer
@@ -75,7 +75,6 @@ class Controller(object):
  
         if not dbw_enabled:
             self.acc_pid.reset()
-
+            acc = 0
+        
         return acc, brake, ang
-
-

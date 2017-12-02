@@ -49,7 +49,7 @@ class DBWNode(object):
         max_lat_accel   = rospy.get_param('~max_lat_accel' , 3.)
         max_steer_angle = rospy.get_param('~max_steer_angle', 8.)
 
-        # Initialize steering, throttle and brake publishers   
+        # Initialize steering, throttle and brake publishers
         self.steer_pub    = rospy.Publisher('/vehicle/steering_cmd',
                                          SteeringCmd, queue_size=1)
         self.throttle_pub = rospy.Publisher('/vehicle/throttle_cmd',
@@ -62,21 +62,21 @@ class DBWNode(object):
         self.controller = Controller(wheel_base, steer_ratio, max_lat_accel, max_steer_angle,acc2torque,decel_limit,accel_limit,wheel_radius)
 
         # TODO: Subscribe to all the topics you need to
-        rospy.Subscriber('/twist_cmd'          , TwistStamped, 
+        rospy.Subscriber('/twist_cmd'          , TwistStamped,
                           self.twist_cmd_cb)
-        rospy.Subscriber('/current_velocity'   , TwistStamped, 
+        rospy.Subscriber('/current_velocity'   , TwistStamped,
                           self.current_velocity_cb)
-        rospy.Subscriber('/vehicle/dbw_enabled', Bool, 
+        rospy.Subscriber('/vehicle/dbw_enabled', Bool,
                           self.dbw_enabled_cb)
 
-        """ 
+        """
         Service initialized:
               - Publishers:
                        - steer_pub    = publisher of the steering cmd
                        - throttle_pub = publisher of the throttle cmd
                        - brake_pub    = publisher of the brake cmd
               - Subscribers:
-                       - twist_cmd_cb        = subscribe to requested twist 
+                       - twist_cmd_cb        = subscribe to requested twist
                        - current_velocity_cb = subscribe to requested velocity
                        - dbw_enabled_cb      = subscribe to driving mode
         """
@@ -95,12 +95,14 @@ class DBWNode(object):
             # You should only publish the control commands if dbw is enabled
 
             if self.current_velocity is not None and self.twist_cmd is not None:
-                            
+
+                v_limit = rospy.get_param('/waypoint_loader/velocity') / 3.6 * 0.9 # Speed limit (with margin)
                 throttle, brake, steering = self.controller.control(self.twist_cmd.linear,
                                                                     self.twist_cmd.angular,
                                                                     self.current_velocity.linear,
                                                                     self.current_velocity.angular,
-                                                                    self.dbw_enabled)
+                                                                    self.dbw_enabled,
+                                                                    v_limit)
 
                 # Immediatly before publish control dbw_enable state
                 if self.dbw_enabled:
@@ -126,7 +128,7 @@ class DBWNode(object):
         bcmd.pedal_cmd_type = BrakeCmd.CMD_TORQUE # We want to command the brake in torque Nm
 
         # If the requested torque is over the threshold power on the breake lights
-        bcmd.enable = brake>BrakeCmd.TORQUE_BOO 
+        bcmd.enable = brake>BrakeCmd.TORQUE_BOO
         bcmd.pedal_cmd = brake    # Set the brake value
         self.brake_pub.publish(bcmd)
 
